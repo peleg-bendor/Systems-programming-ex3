@@ -153,7 +153,7 @@ int find_command(const char *command, char *full_path) {
  * 
  * num: The integer to convert
  * buffer: Buffer to store the resulting string
- * 
+ *  
  * Returns: Pointer to the start of the string in buffer
  */
 char* int_to_string(int num, char *buffer) {
