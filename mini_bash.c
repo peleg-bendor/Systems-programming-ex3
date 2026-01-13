@@ -17,6 +17,7 @@
 #define PROMPT_LEN 11       // Length of "mini-bash$ " (10 chars + space)
 #define BUFFER_SIZE 1024    // Size of input buffer
 #define MAX_ARGS 64         // Maximum number of arguments (command + args)
+#define MAX_PATH 512        // Maximum path length
 
 /*
  * Function: parse_input
@@ -68,6 +69,135 @@ int parse_input(char *input, char *argv[MAX_ARGS]) {
 }
 
 /*
+ * Function: find_command
+ * ----------------------
+ * Searches for an executable command in HOME and /bin directories
+ * 
+ * command: The command name to search for
+ * full_path: Buffer to store the full path if found
+ * 
+ * Returns: 1 if found, 0 if not found
+ * 
+ * Search order:
+ * 1. $HOME/command_name
+ * 2. /bin/command_name
+ */
+int find_command(const char *command, char *full_path) {
+    // First, try searching in HOME directory
+    char *home = getenv("HOME");
+    if (home != NULL) {
+        // Build path: HOME + "/" + command
+        // Example: "/home/user" + "/" + "ls" = "/home/user/ls"
+        
+        // Copy HOME path
+        int i = 0;
+        while (home[i] != '\0' && i < MAX_PATH - 2) {
+            full_path[i] = home[i];
+            i++;
+        }
+        
+        // Add slash
+        if (i < MAX_PATH - 1) {
+            full_path[i++] = '/';
+        }
+        
+        // Add command name
+        int j = 0;
+        while (command[j] != '\0' && i < MAX_PATH - 1) {
+            full_path[i++] = command[j++];
+        }
+        
+        // Null-terminate
+        full_path[i] = '\0';
+        
+        // Check if file exists and is executable
+        // access(path, X_OK) returns 0 if file exists and is executable
+        if (access(full_path, X_OK) == 0) {
+            return 1;  // Found in HOME
+        }
+    }
+    
+    // Not found in HOME, try /bin directory
+    // Build path: "/bin/" + command
+    const char *bin_dir = "/bin/";
+    int i = 0;
+    
+    // Copy "/bin/"
+    while (bin_dir[i] != '\0' && i < MAX_PATH - 1) {
+        full_path[i] = bin_dir[i];
+        i++;
+    }
+    
+    // Add command name
+    int j = 0;
+    while (command[j] != '\0' && i < MAX_PATH - 1) {
+        full_path[i++] = command[j++];
+    }
+    
+    // Null-terminate
+    full_path[i] = '\0';
+    
+    // Check if file exists and is executable
+    if (access(full_path, X_OK) == 0) {
+        return 1;  // Found in /bin
+    }
+    
+    // Not found in either location
+    return 0;
+}
+
+/*
+ * Function: int_to_string
+ * -----------------------
+ * Converts an integer to a string (helper for printing return codes)
+ * 
+ * num: The integer to convert
+ * buffer: Buffer to store the resulting string
+ * 
+ * Returns: Pointer to the start of the string in buffer
+ */
+char* int_to_string(int num, char *buffer) {
+    int i = 0;
+    int is_negative = 0;
+    
+    // Handle negative numbers
+    if (num < 0) {
+        is_negative = 1;
+        num = -num;
+    }
+    
+    // Handle zero specially
+    if (num == 0) {
+        buffer[i++] = '0';
+        buffer[i] = '\0';
+        return buffer;
+    }
+    
+    // Convert digits (in reverse order)
+    while (num > 0) {
+        buffer[i++] = '0' + (num % 10);
+        num /= 10;
+    }
+    
+    // Add negative sign if needed
+    if (is_negative) {
+        buffer[i++] = '-';
+    }
+    
+    // Null-terminate
+    buffer[i] = '\0';
+    
+    // Reverse the string
+    for (int j = 0; j < i / 2; j++) {
+        char temp = buffer[j];
+        buffer[j] = buffer[i - 1 - j];
+        buffer[i - 1 - j] = temp;
+    }
+    
+    return buffer;
+}
+
+/*
  * Main function - Entry point of the shell
  * 
  * Implements an infinite loop that:
@@ -83,6 +213,9 @@ int main(void) {
     // Array to store command arguments (pointers to tokens)
     // Format: ["command", "arg1", "arg2", ..., NULL]
     char *argv[MAX_ARGS];
+    
+    // Buffer to store full path to executable
+    char full_path[MAX_PATH];
 
     // Main shell loop - runs indefinitely until user types "exit"
     while (1) {
@@ -173,15 +306,79 @@ int main(void) {
             continue;  // Go to next iteration - don't try to execute externally
         }
         
+        // STEP 5: Search for external command
         // If we reach here, it's not an internal command
-        // Temporary: Print that we would execute external command
-        write(STDOUT_FILENO, "[External command: ", 19);
-        write(STDOUT_FILENO, argv[0], strlen(argv[0]));
-        write(STDOUT_FILENO, "]\n", 2);
         
-        // TODO: STEP 5 - Command search will go here
-        
-        // TODO: STEP 6 - Fork-Exec-Wait will go here
+        if (find_command(argv[0], full_path)) {
+            // STEP 6: Fork-Exec-Wait pattern
+            // Command found! Now execute it in a child process
+            
+            // fork() creates a child process
+            // Returns: PID of child in parent, 0 in child, -1 on error
+            pid_t pid = fork();
+            
+            if (pid == -1) {
+                // Fork failed - print error and continue shell
+                perror("fork");
+                continue;
+            } else if (pid == 0) {
+                // ===== CHILD PROCESS =====
+                // This code runs ONLY in the child process
+                
+                // execv() replaces the child process with the new program
+                // If successful, this function NEVER returns
+                // Parameters:
+                //   - full_path: path to executable
+                //   - argv: array of arguments (NULL-terminated)
+                execv(full_path, argv);
+                
+                // If we reach here, execv() failed
+                perror("execv");
+                exit(1);  // Child must exit (don't continue shell loop in child!)
+                
+            } else {
+                // ===== PARENT PROCESS =====
+                // This code runs ONLY in the parent process
+                // pid contains the child's process ID
+                
+                // wait() blocks parent until child process terminates
+                // Returns: PID of terminated child, or -1 on error
+                // Parameter: pointer to int where exit status is stored
+                int status;
+                pid_t waited_pid = wait(&status);
+                
+                if (waited_pid == -1) {
+                    perror("wait");
+                } else {
+                    // Child finished successfully
+                    // Extract exit code using WIFEXITED and WEXITSTATUS macros
+                    
+                    if (WIFEXITED(status)) {
+                        // Child exited normally
+                        int exit_code = WEXITSTATUS(status);
+                        
+                        // Print "Command completed with return code: X"
+                        write(STDOUT_FILENO, "Command completed with return code: ", 36);
+                        
+                        // Convert exit code to string and print it
+                        char code_str[12];  // Enough for 32-bit int
+                        int_to_string(exit_code, code_str);
+                        write(STDOUT_FILENO, code_str, strlen(code_str));
+                        write(STDOUT_FILENO, "\n", 1);
+                    } else {
+                        // Child terminated abnormally (signal, etc.)
+                        write(STDOUT_FILENO, "Command terminated abnormally\n", 30);
+                    }
+                }
+            }
+            
+        } else {
+            // Command not found in HOME or /bin
+            // Print error message: "[command]: Unknown Command"
+            write(STDOUT_FILENO, "[", 1);
+            write(STDOUT_FILENO, argv[0], strlen(argv[0]));
+            write(STDOUT_FILENO, "]: Unknown Command\n", 19);
+        }
     }
     
     return 0;
