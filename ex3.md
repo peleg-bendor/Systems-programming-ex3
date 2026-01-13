@@ -57,8 +57,7 @@
 ### שלב ג': הודעת שגיאה 
 
 אם הפקודה לא נמצאה באף אחד מהמקומות: 
-
-    הדפיסו הודעה בפורמט: [command_name]: Unknown Command ] 
+הדפיסו הודעה בפורמט: [command_name]: Unknown Command ] 
 
 ## הרצה באמצעות ניהול תהליכים (Process Management) 
 
